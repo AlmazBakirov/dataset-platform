@@ -6,15 +6,21 @@ from core import mock_backend
 from core.ui import header
 
 require_role(["labeler"])
-header("Annotate", "MVP: классификация (выбор классов). Для bbox позже добавляется canvas-компонент. :contentReference[oaicite:6]{index=6}")
+header("Annotate", "MVP: классификация (выбор классов). Для bbox позже добавляется canvas-компонент.")
+
 
 def client() -> ApiClient:
     return ApiClient(settings.backend_url, token=st.session_state.get("token"))
 
-task_id = st.text_input("Task ID")
+default_task_id = str(st.session_state.get("selected_task_id", "")).strip()
 
-if not task_id:
+task_id = st.text_input("Task ID", value=default_task_id).strip()
+
+if task_id:
+    st.session_state["selected_task_id"] = task_id
+else:
     st.stop()
+
 
 try:
     task = mock_backend.mock_get_task(task_id) if settings.use_mock else client().get_task(task_id)
