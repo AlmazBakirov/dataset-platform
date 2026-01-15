@@ -1,115 +1,149 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List
+from typing import Any, Optional
+
 import httpx
 
-from core.config import settings
-
-class ApiError(RuntimeError):
-    def __init__(self, status_code: int, message: str, details: Any = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.details = details
 
 @dataclass
-class LoginResponse:
-    access_token: str
-    role: str
-    user_id: str
+class ApiError(Exception):
+    status_code: int
+    message: str
+    payload: Any | None = None
+
+    def __str__(self) -> str:
+        base = f"{self.status_code}: {self.message}"
+        return base
+
 
 class ApiClient:
-    def __init__(self, base_url: str, token: Optional[str] = None):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str, token: Optional[str] = None, timeout_s: float = 20.0) -> None:
+        self.base_url = (base_url or "").rstrip("/")
         self.token = token
+        self.timeout_s = timeout_s
 
-    def _headers(self) -> Dict[str, str]:
-        h = {"Accept": "application/json"}
+    def _url(self, path: str) -> str:
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.base_url}{path}"
+
+    def _headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {"Accept": "application/json"}
         if self.token:
-            h["Authorization"] = f"Bearer {self.token}"
-        return h
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
 
-    def _request(self, method: str, path: str, **kwargs) -> Any:
-        url = f"{self.base_url}{path}"
-        with httpx.Client(timeout=settings.request_timeout_s) as client:
-            r = client.request(method, url, headers=self._headers(), **kwargs)
-        if r.status_code >= 400:
+    def _raise_for_status(self, resp: httpx.Response) -> None:
+        if 200 <= resp.status_code < 300:
+            return
+
+        # Try to extract a meaningful error message
+        msg = resp.reason_phrase or "Request failed"
+        payload: Any | None = None
+
+        try:
+            payload = resp.json()
+            if isinstance(payload, dict):
+                # Common backends: FastAPI {detail: ...}, custom {message: ...}
+                if "detail" in payload and isinstance(payload["detail"], str):
+                    msg = payload["detail"]
+                elif "message" in payload and isinstance(payload["message"], str):
+                    msg = payload["message"]
+        except Exception:
+            payload = resp.text
+
+        raise ApiError(status_code=resp.status_code, message=msg, payload=payload)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any | None = None,
+        data: dict[str, Any] | None = None,
+        files: Any | None = None,
+    ) -> Any:
+        if not self.base_url:
+            raise ApiError(status_code=0, message="BACKEND_URL is empty or not configured.")
+
+        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
+        url = self._url(path)
+
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.request(
+                    method=method.upper(),
+                    url=url,
+                    headers=self._headers(),
+                    params=params,
+                    json=json,
+                    data=data,
+                    files=files,
+                )
+        except httpx.RequestError as e:
+            raise ApiError(status_code=0, message=f"Network error: {e!s}") from e
+
+        self._raise_for_status(resp)
+
+        # Some endpoints might return no JSON
+        if resp.status_code == 204:
+            return None
+
+        content_type = resp.headers.get("content-type", "")
+        if "application/json" in content_type:
             try:
-                payload = r.json()
-                msg = payload.get("message") or payload.get("detail") or r.text
-            except Exception:
-                payload = r.text
-                msg = r.text
-            raise ApiError(r.status_code, msg, payload)
-        if r.headers.get("content-type", "").startswith("application/json"):
-            return r.json()
-        return r.content
+                return resp.json()
+            except Exception as e:
+                raise ApiError(status_code=resp.status_code, message="Invalid JSON in response", payload=resp.text) from e
 
-    # ---------- AUTH ----------
-    def login(self, username: str, password: str) -> LoginResponse:
-        payload = {"username": username, "password": password}
-        data = self._request("POST", "/auth/login", json=payload)
-        # ожидаемый формат: {access_token, role, user_id}
-        return LoginResponse(
-            access_token=data["access_token"],
-            role=data["role"],
-            user_id=str(data.get("user_id", "")),
+        # Fallback
+        return resp.text
+
+    # ---------- Auth ----------
+    def login(self, username: str, password: str) -> dict[str, Any]:
+        return self._request("POST", "/auth/login", json={"username": username, "password": password})
+
+    # ---------- Customer: requests ----------
+    def create_request(self, title: str, description: str, classes: list[str]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/requests",
+            json={"title": title, "description": description, "classes": classes},
         )
 
-    def me(self) -> Dict[str, Any]:
-        return self._request("GET", "/me")
+    def list_requests(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/requests")
+        return data if isinstance(data, list) else []
 
-    # ---------- REQUESTS / DATASETS ----------
-    def list_requests(self) -> List[Dict[str, Any]]:
-        return self._request("GET", "/requests")
-
-    def create_request(self, title: str, description: str, classes: List[str]) -> Dict[str, Any]:
-        payload = {"title": title, "description": description, "classes": classes}
-        return self._request("POST", "/requests", json=payload)
-
-    def get_request(self, request_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/requests/{request_id}")
-
-    # ---------- UPLOADS ----------
-    def upload_files_mvp(self, request_id: str, files: List[tuple[str, bytes, str]]) -> Dict[str, Any]:
-        """
-        MVP-метод: отправка файлов через backend (подходит для небольших файлов).
-        files: список кортежей (filename, content_bytes, mime)
-        """
-        multipart = []
-        for name, content, mime in files:
-            multipart.append(("files", (name, content, mime)))
+    # ---------- Uploads (MVP multipart) ----------
+    def upload_files_mvp(self, request_id: str, packed_files: list[tuple[str, bytes, str]]) -> dict[str, Any]:
+        multipart: list[tuple[str, tuple[str, bytes, str]]] = []
+        for fname, content, mime in packed_files:
+            multipart.append(("files", (fname, content, mime)))
         return self._request("POST", f"/requests/{request_id}/uploads", files=multipart)
 
-    def get_presign(self, request_id: str, filename: str, content_type: str) -> Dict[str, Any]:
-        """
-        Production: backend выдаёт presigned URL для прямой загрузки в object storage.
-        Ожидаем: {upload_url, object_key, headers(optional)}
-        """
-        payload = {"filename": filename, "content_type": content_type}
-        return self._request("POST", f"/requests/{request_id}/uploads/presign", json=payload)
-
-    def confirm_upload(self, request_id: str, object_key: str) -> Dict[str, Any]:
-        payload = {"object_key": object_key}
-        return self._request("POST", f"/requests/{request_id}/uploads/confirm", json=payload)
-
     # ---------- QC ----------
-    def run_qc(self, request_id: str) -> Dict[str, Any]:
-        return self._request("POST", f"/qc/run?request_id={request_id}")
+    def run_qc(self, request_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/requests/{request_id}/qc/run")
 
-    def qc_status(self, request_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/qc/status?request_id={request_id}")
+    def qc_results(self, request_id: str) -> list[dict[str, Any]]:
+        data = self._request("GET", f"/requests/{request_id}/qc/results")
+        return data if isinstance(data, list) else []
 
-    def qc_results(self, request_id: str) -> List[Dict[str, Any]]:
-        return self._request("GET", f"/qc/results?request_id={request_id}")
+    # ---------- Labeler: tasks ----------
+    def list_tasks(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/tasks")
+        return data if isinstance(data, list) else []
 
-    # ---------- LABELING ----------
-    def list_tasks(self) -> List[Dict[str, Any]]:
-        return self._request("GET", "/tasks")
+    def get_task(self, task_id: str) -> dict[str, Any]:
+        data = self._request("GET", f"/tasks/{task_id}")
+        return data if isinstance(data, dict) else {}
 
-    def get_task(self, task_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/tasks/{task_id}")
-
-    def save_labels(self, task_id: str, image_id: str, labels: List[str]) -> Dict[str, Any]:
-        payload = {"image_id": image_id, "labels": labels}
-        return self._request("POST", f"/tasks/{task_id}/labels", json=payload)
+    def save_labels(self, task_id: str, image_id: str, labels: list[str]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/tasks/{task_id}/labels",
+            json={"image_id": image_id, "labels": labels},
+        )
