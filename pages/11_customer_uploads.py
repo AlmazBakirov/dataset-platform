@@ -10,7 +10,17 @@ header("Uploads", "MVP: загрузка небольших файлов чер�
 def client() -> ApiClient:
     return ApiClient(settings.backend_url, token=st.session_state.get("token"))
 
-request_id = st.text_input("Request ID", placeholder="Вставьте ID заявки из Requests")
+default_request_id = str(st.session_state.get("selected_request_id", "")).strip()
+
+request_id = st.text_input(
+    "Request ID",
+    value=default_request_id,
+    placeholder="Вставьте ID заявки из Requests",
+).strip()
+
+if request_id:
+    st.session_state["selected_request_id"] = request_id
+
 
 files = st.file_uploader("Select images", type=["jpg","jpeg","png"], accept_multiple_files=True)
 

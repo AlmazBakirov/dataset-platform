@@ -12,7 +12,13 @@ header("QC Review", "Проверка на плагиат/дубликаты + A
 def client() -> ApiClient:
     return ApiClient(settings.backend_url, token=st.session_state.get("token"))
 
-request_id = st.text_input("Request ID")
+default_request_id = str(st.session_state.get("selected_request_id", "")).strip()
+
+request_id = st.text_input("Request ID", value=default_request_id).strip()
+
+if request_id:
+    st.session_state["selected_request_id"] = request_id
+
 
 col1, col2 = st.columns(2)
 with col1:
