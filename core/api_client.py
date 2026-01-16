@@ -147,3 +147,17 @@ class ApiClient:
             f"/tasks/{task_id}/labels",
             json={"image_id": image_id, "labels": labels},
         )
+    
+        # ---------- Admin (optional) ----------
+    def admin_list_requests(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/admin/requests")
+        return data if isinstance(data, list) else []
+
+    def admin_list_tasks(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/admin/tasks")
+        return data if isinstance(data, list) else []
+
+    def admin_list_users(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/admin/users")
+        return data if isinstance(data, list) else []
+

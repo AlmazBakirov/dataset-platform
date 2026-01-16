@@ -20,13 +20,10 @@ def load_requests():
     if settings.use_mock:
         return mock_backend.mock_list_requests()
 
-    # Fallback strategy:
-    # 1) if backend already provides /admin/requests -> use it
-    # 2) otherwise fallback to /requests (may return 403 depending on backend policy)
     try:
-        # If you later add client().admin_list_requests(), swap to that method.
-        return client()._request("GET", "/admin/requests")  # type: ignore[attr-defined]
+        return client().admin_list_requests()
     except ApiError as e:
+        # If admin endpoints not implemented yet, fallback
         if e.status_code in (404, 405, 501):
             return client().list_requests()
         raise
@@ -36,11 +33,12 @@ def load_tasks():
         return mock_backend.mock_list_tasks()
 
     try:
-        return client()._request("GET", "/admin/tasks")  # type: ignore[attr-defined]
+        return client().admin_list_tasks()
     except ApiError as e:
         if e.status_code in (404, 405, 501):
             return client().list_tasks()
         raise
+
 
 # --------------------------
 # UI helpers
