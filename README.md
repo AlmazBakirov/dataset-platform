@@ -13,3 +13,9 @@ pip install -r requirements.txt
 $env:USE_MOCK="1"
 $env:BACKEND_URL="http://localhost:8000"
 python -m streamlit run app.py
+
+## Config
+
+Copy `.env.example` to `.env` (optional) and set:
+- `USE_MOCK=1` to run UI without backend
+- `BACKEND_URL=http://localhost:8000` for real backend

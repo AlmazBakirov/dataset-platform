@@ -1,12 +1,11 @@
 import streamlit as st
 from core.auth import logout
-from core.ui import header
 
 st.set_page_config(page_title="Dataset Platform UI", layout="wide")
 
 role = st.session_state.get("role")
 
-# Страницы (Streamlit современный multipage: st.Page / st.navigation) :contentReference[oaicite:3]{index=3}
+# Pages (Streamlit multipage via st.Page / st.navigation)
 login = st.Page("pages/01_login.py", title="Login", icon="🔐")
 
 customer_pages = [
@@ -24,25 +23,37 @@ admin_pages = [
     st.Page("pages/30_admin_panel.py", title="Admin Panel", icon="⚙️"),
 ]
 
-pages = [login]
-nav_structure = {"Login": [login]}
-
+# Navigation structure by role
 if role == "customer":
     nav_structure = {"Customer": customer_pages, "Account": [login]}
 elif role == "labeler":
     nav_structure = {"Labeler": labeler_pages, "Account": [login]}
 elif role in ("admin", "universal"):
     nav_structure = {
+        "Admin": admin_pages,
         "Customer": customer_pages,
         "Labeler": labeler_pages,
-        "Admin": admin_pages,
         "Account": [login],
     }
 else:
-    nav_structure = {"Login": [login]}
+    nav_structure = {"Account": [login]}
 
+# Default page after login
+default_page = login
+if role == "customer":
+    default_page = customer_pages[0]   # Requests
+elif role == "labeler":
+    default_page = labeler_pages[0]    # My Tasks
+elif role in ("admin", "universal"):
+    default_page = admin_pages[0]      # Admin Panel
 
-nav = st.navigation(nav_structure)
+# Try to use Streamlit's `default` if supported; otherwise fallback
+try:
+    nav = st.navigation(nav_structure, default=default_page)
+except TypeError:
+    # Older Streamlit: no `default` kwarg. Fallback: ensure first group is the desired landing group.
+    nav = st.navigation(nav_structure)
+
 nav.run()
 
 with st.sidebar:
