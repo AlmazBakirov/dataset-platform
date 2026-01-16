@@ -20,7 +20,7 @@ tasks = api_call("Load tasks", do_list_tasks, spinner="Loading tasks...", show_p
 if not tasks:
     st.write("No tasks assigned.")
 else:
-    st.dataframe(tasks, use_container_width=True)
+    st.dataframe(tasks, width="stretch")
 
     st.divider()
     st.subheader("Open task (no manual ID)")

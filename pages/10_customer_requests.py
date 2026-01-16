@@ -48,7 +48,7 @@ items = api_call("Load requests", do_list, spinner="Loading requests...", show_p
 if not items:
     st.write("No requests yet.")
 else:
-    st.dataframe(items, use_container_width=True)
+    st.dataframe(items, width="stretch")
 
     st.divider()
     st.subheader("Open request (no manual ID)")

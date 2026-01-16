@@ -140,7 +140,7 @@ with tabs[0]:
     if not req_filtered:
         st.info("No requests found (after filters).")
     else:
-        st.dataframe(req_filtered, use_container_width=True)
+        st.dataframe(req_filtered, width="stretch")
 
         st.divider()
         st.subheader("Open request (no manual ID)")
@@ -180,6 +180,27 @@ with tabs[0]:
                     if row:
                         st.json(row)
 
+            st.divider()
+            st.subheader("Assign (MVP)")
+
+            labeler_username = st.text_input(
+                "Assign to labeler (username)",
+                placeholder="labeler1",
+                key="admin_assign_labeler_username",
+            ).strip()
+
+            if st.button("Assign task to labeler", type="secondary", disabled=not labeler_username, key="admin_assign_btn"):
+                def do_assign():
+                    if settings.use_mock:
+                        # optional mock; if not implemented, return a stub
+                        return {"status": "mocked", "request_id": selected_request_id, "labeler_username": labeler_username}
+                    return client().admin_assign_task(selected_request_id, labeler_username)
+
+                resp = api_call("Assign", do_assign, spinner="Assigning...", show_payload=True)
+                if resp is not None:
+                    st.success("Assign request to labeler: done (or mocked).")
+
+
 # ==========================
 # Tasks tab
 # ==========================
@@ -202,7 +223,7 @@ with tabs[1]:
     if not task_filtered:
         st.info("No tasks found (after filters).")
     else:
-        st.dataframe(task_filtered, use_container_width=True)
+        st.dataframe(task_filtered, width="stretch")
 
         st.divider()
         st.subheader("Open task (no manual ID)")

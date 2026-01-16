@@ -42,7 +42,7 @@ img = images[int(idx)]
 
 st.write(f"Image: **{img['image_id']}**")
 if img.get("url"):
-    st.image(img["url"], use_container_width=True)
+    st.image(img["url"], width="stretch")
 else:
     st.info("Mock: нет URL. В проде backend должен отдавать ссылку на превью/объект в storage.")
 
