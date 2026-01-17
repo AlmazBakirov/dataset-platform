@@ -13,15 +13,14 @@ class ApiError(Exception):
     payload: Any | None = None
 
     def __str__(self) -> str:
-        base = f"{self.status_code}: {self.message}"
-        return base
+        return f"{self.status_code}: {self.message}"
 
 
 class ApiClient:
     def __init__(self, base_url: str, token: Optional[str] = None, timeout_s: float = 20.0) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.token = token
-        self.timeout_s = timeout_s
+        self.timeout_s = float(timeout_s)
 
     def _url(self, path: str) -> str:
         if not path.startswith("/"):
@@ -38,14 +37,12 @@ class ApiClient:
         if 200 <= resp.status_code < 300:
             return
 
-        # Try to extract a meaningful error message
         msg = resp.reason_phrase or "Request failed"
         payload: Any | None = None
 
         try:
             payload = resp.json()
             if isinstance(payload, dict):
-                # Common backends: FastAPI {detail: ...}, custom {message: ...}
                 if "detail" in payload and isinstance(payload["detail"], str):
                     msg = payload["detail"]
                 elif "message" in payload and isinstance(payload["message"], str):
@@ -87,7 +84,6 @@ class ApiClient:
 
         self._raise_for_status(resp)
 
-        # Some endpoints might return no JSON
         if resp.status_code == 204:
             return None
 
@@ -98,7 +94,6 @@ class ApiClient:
             except Exception as e:
                 raise ApiError(status_code=resp.status_code, message="Invalid JSON in response", payload=resp.text) from e
 
-        # Fallback
         return resp.text
 
     # ---------- Auth ----------
@@ -107,11 +102,7 @@ class ApiClient:
 
     # ---------- Customer: requests ----------
     def create_request(self, title: str, description: str, classes: list[str]) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/requests",
-            json={"title": title, "description": description, "classes": classes},
-        )
+        return self._request("POST", "/requests", json={"title": title, "description": description, "classes": classes})
 
     def list_requests(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/requests")
@@ -123,6 +114,15 @@ class ApiClient:
         for fname, content, mime in packed_files:
             multipart.append(("files", (fname, content, mime)))
         return self._request("POST", f"/requests/{request_id}/uploads", files=multipart)
+
+    # ---------- Uploads (presigned) ----------
+    def presign_uploads(self, request_id: str, files: list[dict[str, Any]]) -> dict[str, Any]:
+        # files: [{"filename": "...", "content_type": "..."}]
+        return self._request("POST", "/uploads/presign", json={"request_id": request_id, "files": files})
+
+    def complete_uploads(self, request_id: str, uploaded: list[dict[str, Any]]) -> dict[str, Any]:
+        # uploaded: [{"filename": "...", "key": "...", "etag": "..."}]
+        return self._request("POST", "/uploads/complete", json={"request_id": request_id, "uploaded": uploaded})
 
     # ---------- QC ----------
     def run_qc(self, request_id: str) -> dict[str, Any]:
@@ -142,13 +142,9 @@ class ApiClient:
         return data if isinstance(data, dict) else {}
 
     def save_labels(self, task_id: str, image_id: str, labels: list[str]) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            f"/tasks/{task_id}/labels",
-            json={"image_id": image_id, "labels": labels},
-        )
-    
-        # ---------- Admin (optional) ----------
+        return self._request("POST", f"/tasks/{task_id}/labels", json={"image_id": image_id, "labels": labels})
+
+    # ---------- Admin ----------
     def admin_list_requests(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/admin/requests")
         return data if isinstance(data, list) else []
@@ -160,11 +156,10 @@ class ApiClient:
     def admin_list_users(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/admin/users")
         return data if isinstance(data, list) else []
-    
+
     def admin_assign_task(self, request_id: str, labeler_username: str) -> dict[str, Any]:
         return self._request(
             "POST",
             "/admin/assign",
             json={"request_id": request_id, "labeler_username": labeler_username},
         )
-
