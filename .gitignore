@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 *.pyd
 
+.env
+.pth
 .venv/
 venv/
 

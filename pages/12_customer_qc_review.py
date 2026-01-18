@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from streamlit_carousel import carousel
 
 from core.auth import require_role
 from core.config import settings
@@ -112,6 +113,24 @@ if st.button("Load QC results", disabled=not request_id):
     st.subheader("QC Results")
 
     st.dataframe(out, use_container_width=True)
+
+    st.divider()
+    st.subheader("Image Carousel")
+
+    carousel_items = [
+        {
+            "title": f"{row['image_id']} (AI: {row['ai_generated_score']:.2f}, Dup: {row['duplicate_score']:.2f})",
+            "img": row["source_url"],
+        }
+        for _, row in out.iterrows()
+        if row["source_url"]
+    ]
+
+    if carousel_items:
+        carousel(items=carousel_items, width=0.8)
+    else:
+        st.info("No images with source URLs to display in carousel.")
+
 
     st.divider()
     st.subheader("Export")
