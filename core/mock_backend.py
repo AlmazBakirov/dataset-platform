@@ -125,7 +125,12 @@ def mock_get_task(task_id: str) -> dict[str, Any]:
 
     request_id = str(t.get("request_id"))
     req = next((r for r in _requests if str(r.get("id")) == request_id), None)
-    classes = (req.get("classes") if req else None) or ["pothole", "crosswalk", "traffic_light", "road_sign"]
+    classes = (req.get("classes") if req else None) or [
+        "pothole",
+        "crosswalk",
+        "traffic_light",
+        "road_sign",
+    ]
 
     images = [{"image_id": f"{task_id}_img_{i:03d}", "url": None} for i in range(1, 11)]
     return {
@@ -145,12 +150,14 @@ def mock_save_labels(task_id: str, image_id: str, labels: list[str]) -> dict[str
 
 
 # ---------- Uploads: MVP (mock) ----------
-def mock_upload_files_mvp(request_id: str, packed_files: list[tuple[str, bytes, str]]) -> dict[str, Any]:
+def mock_upload_files_mvp(
+    request_id: str, packed_files: list[tuple[str, bytes, str]]
+) -> dict[str, Any]:
     _ensure_seed_data()
     rid = str(request_id)
     items = _uploads_store.setdefault(rid, [])
 
-    for (fname, content, mime) in packed_files:
+    for fname, content, mime in packed_files:
         items.append(
             {
                 "filename": fname,
@@ -205,6 +212,7 @@ def mock_complete_uploads(request_id: str, uploaded: list[dict[str, Any]]) -> di
             }
         )
     return {"status": "ok", "request_id": rid, "uploaded": uploaded}
+
 
 def mock_task_progress(task_id: str) -> dict[str, Any]:
     _ensure_seed_data()

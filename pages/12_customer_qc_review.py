@@ -1,18 +1,20 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
+from core import mock_backend
+from core.api_client import ApiClient
 from core.auth import require_role
 from core.config import settings
-from core.api_client import ApiClient
-from core import mock_backend
 from core.ui import header
 from core.ui_helpers import api_call
 
 require_role(["customer", "admin", "universal"])
 header("QC Review", "Duplicates + AI-generated: фильтры, сортировка, экспорт flagged.")
 
+
 def client() -> ApiClient:
     return ApiClient(settings.backend_url, token=st.session_state.get("token"))
+
 
 default_request_id = str(st.session_state.get("selected_request_id", "")).strip()
 request_id = st.text_input("Request ID", value=default_request_id).strip()
@@ -25,7 +27,9 @@ with c1:
 with c2:
     ai_thr = st.slider("AI-generated threshold", 0.0, 1.0, 0.80, 0.01)
 with c3:
-    sort_by = st.selectbox("Sort by", ["duplicate_score", "ai_generated_score", "image_id"], index=0)
+    sort_by = st.selectbox(
+        "Sort by", ["duplicate_score", "ai_generated_score", "image_id"], index=0
+    )
 with c4:
     sort_desc = st.checkbox("Sort desc", value=True)
 
@@ -40,6 +44,7 @@ with f4:
     top_n = st.number_input("Top N (0 = all)", min_value=0, max_value=5000, value=200, step=50)
 
 if st.button("Run QC", type="primary", disabled=not request_id):
+
     def do_run_qc():
         if settings.use_mock:
             return {"status": "mocked"}
@@ -50,6 +55,7 @@ if st.button("Run QC", type="primary", disabled=not request_id):
         st.success("QC started (or mocked).")
 
 if st.button("Load QC results", disabled=not request_id):
+
     def do_load():
         if settings.use_mock:
             return mock_backend.mock_qc_results(request_id)

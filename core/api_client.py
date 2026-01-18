@@ -92,24 +92,36 @@ class ApiClient:
             try:
                 return resp.json()
             except Exception as e:
-                raise ApiError(status_code=resp.status_code, message="Invalid JSON in response", payload=resp.text) from e
+                raise ApiError(
+                    status_code=resp.status_code,
+                    message="Invalid JSON in response",
+                    payload=resp.text,
+                ) from e
 
         return resp.text
 
     # ---------- Auth ----------
     def login(self, username: str, password: str) -> dict[str, Any]:
-        return self._request("POST", "/auth/login", json={"username": username, "password": password})
+        return self._request(
+            "POST", "/auth/login", json={"username": username, "password": password}
+        )
 
     # ---------- Customer: requests ----------
     def create_request(self, title: str, description: str, classes: list[str]) -> dict[str, Any]:
-        return self._request("POST", "/requests", json={"title": title, "description": description, "classes": classes})
+        return self._request(
+            "POST",
+            "/requests",
+            json={"title": title, "description": description, "classes": classes},
+        )
 
     def list_requests(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/requests")
         return data if isinstance(data, list) else []
 
     # ---------- Uploads (MVP multipart) ----------
-    def upload_files_mvp(self, request_id: str, packed_files: list[tuple[str, bytes, str]]) -> dict[str, Any]:
+    def upload_files_mvp(
+        self, request_id: str, packed_files: list[tuple[str, bytes, str]]
+    ) -> dict[str, Any]:
         multipart: list[tuple[str, tuple[str, bytes, str]]] = []
         for fname, content, mime in packed_files:
             multipart.append(("files", (fname, content, mime)))
@@ -121,10 +133,16 @@ class ApiClient:
 
     # ---------- Uploads (presigned) ----------
     def presign_uploads(self, request_id: str, files: list[dict[str, Any]]) -> dict[str, Any]:
-        return self._request("POST", "/uploads/presign", json={"request_id": request_id, "files": files})
+        return self._request(
+            "POST", "/uploads/presign", json={"request_id": request_id, "files": files}
+        )
 
     def complete_uploads(self, request_id: str, uploaded: list[dict[str, Any]]) -> dict[str, Any]:
-        return self._request("POST", "/uploads/complete", json={"request_id": request_id, "uploaded": uploaded})
+        return self._request(
+            "POST",
+            "/uploads/complete",
+            json={"request_id": request_id, "uploaded": uploaded},
+        )
 
     # ---------- QC ----------
     def run_qc(self, request_id: str) -> dict[str, Any]:
@@ -144,8 +162,12 @@ class ApiClient:
         return data if isinstance(data, dict) else {}
 
     def save_labels(self, task_id: str, image_id: str, labels: list[str]) -> dict[str, Any]:
-        return self._request("POST", f"/tasks/{task_id}/labels", json={"image_id": image_id, "labels": labels})
-    
+        return self._request(
+            "POST",
+            f"/tasks/{task_id}/labels",
+            json={"image_id": image_id, "labels": labels},
+        )
+
     def task_progress(self, task_id: str) -> dict[str, Any]:
         data = self._request("GET", f"/tasks/{task_id}/progress")
         return data if isinstance(data, dict) else {}
@@ -153,7 +175,6 @@ class ApiClient:
     def complete_task(self, task_id: str) -> dict[str, Any]:
         data = self._request("POST", f"/tasks/{task_id}/complete")
         return data if isinstance(data, dict) else {"status": "ok"}
-
 
     # ---------- Admin ----------
     def admin_list_requests(self) -> list[dict[str, Any]]:

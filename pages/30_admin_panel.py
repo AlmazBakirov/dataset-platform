@@ -1,17 +1,22 @@
 import streamlit as st
 
+from core import mock_backend
+from core.api_client import ApiClient, ApiError
 from core.auth import require_role
 from core.config import settings
-from core.api_client import ApiClient, ApiError
-from core import mock_backend
 from core.ui import header
 from core.ui_helpers import api_call
 
 require_role(["admin", "universal"])
-header("Admin Panel", "MVP: просмотр Requests/Tasks + быстрые переходы без ручного копирования ID.")
+header(
+    "Admin Panel",
+    "MVP: просмотр Requests/Tasks + быстрые переходы без ручного копирования ID.",
+)
+
 
 def client() -> ApiClient:
     return ApiClient(settings.backend_url, token=st.session_state.get("token"))
+
 
 # --------------------------
 # Data loaders (with fallback)
@@ -28,6 +33,7 @@ def load_requests():
             return client().list_requests()
         raise
 
+
 def load_tasks():
     if settings.use_mock:
         return mock_backend.mock_list_tasks()
@@ -43,7 +49,13 @@ def load_tasks():
 # --------------------------
 # UI helpers
 # --------------------------
-def apply_filters(rows: list[dict], search: str, status_filter: list[str], id_key_candidates: list[str], title_key_candidates: list[str]) -> list[dict]:
+def apply_filters(
+    rows: list[dict],
+    search: str,
+    status_filter: list[str],
+    id_key_candidates: list[str],
+    title_key_candidates: list[str],
+) -> list[dict]:
     s = (search or "").strip().lower()
 
     def get_first(d: dict, keys: list[str]) -> str:
@@ -63,14 +75,17 @@ def apply_filters(rows: list[dict], search: str, status_filter: list[str], id_ke
         for r in out:
             rid = get_first(r, id_key_candidates)
             title = get_first(r, title_key_candidates)
-            blob = f"{rid} {title} {str(r.get('status',''))}".lower()
+            blob = f"{rid} {title} {str(r.get('status', ''))}".lower()
             if s in blob:
                 filtered.append(r)
         out = filtered
 
     return out
 
-def make_select_labels(rows: list[dict], id_keys: list[str], title_keys: list[str]) -> tuple[list[str], dict[str, str]]:
+
+def make_select_labels(
+    rows: list[dict], id_keys: list[str], title_keys: list[str]
+) -> tuple[list[str], dict[str, str]]:
     labels: list[str] = []
     label_to_id: dict[str, str] = {}
 
@@ -98,6 +113,7 @@ def make_select_labels(rows: list[dict], id_keys: list[str], title_keys: list[st
 
     return labels, label_to_id
 
+
 # --------------------------
 # Top metrics
 # --------------------------
@@ -124,9 +140,19 @@ with tabs[0]:
 
     req_search = st.text_input("Search (id/title/status)", key="admin_req_search")
     # Load requests once per render
-    req_items = api_call("Load requests", load_requests, spinner="Loading requests...", show_payload=True) or []
+    req_items = (
+        api_call(
+            "Load requests",
+            load_requests,
+            spinner="Loading requests...",
+            show_payload=True,
+        )
+        or []
+    )
     # Status filter options
-    req_statuses = sorted({str(r.get("status", "")).strip() for r in req_items if str(r.get("status", "")).strip()})
+    req_statuses = sorted(
+        {str(r.get("status", "")).strip() for r in req_items if str(r.get("status", "")).strip()}
+    )
     req_status_filter = st.multiselect("Status filter", req_statuses, key="admin_req_status_filter")
 
     req_filtered = apply_filters(
@@ -162,7 +188,9 @@ with tabs[0]:
                         pre_index = i
                         break
 
-            selected_label = st.selectbox("Select request", labels, index=pre_index, key="admin_req_select")
+            selected_label = st.selectbox(
+                "Select request", labels, index=pre_index, key="admin_req_select"
+            )
             selected_request_id = label_to_id[selected_label]
             st.session_state["selected_request_id"] = selected_request_id
 
@@ -176,7 +204,15 @@ with tabs[0]:
             with c3:
                 if st.checkbox("Show selected JSON", key="admin_req_show_json"):
                     # show full row for selected id
-                    row = next((r for r in req_items if str(r.get("id", r.get("request_id", ""))).strip() == selected_request_id), None)
+                    row = next(
+                        (
+                            r
+                            for r in req_items
+                            if str(r.get("id", r.get("request_id", ""))).strip()
+                            == selected_request_id
+                        ),
+                        None,
+                    )
                     if row:
                         st.json(row)
 
@@ -189,11 +225,21 @@ with tabs[0]:
                 key="admin_assign_labeler_username",
             ).strip()
 
-            if st.button("Assign task to labeler", type="secondary", disabled=not labeler_username, key="admin_assign_btn"):
+            if st.button(
+                "Assign task to labeler",
+                type="secondary",
+                disabled=not labeler_username,
+                key="admin_assign_btn",
+            ):
+
                 def do_assign():
                     if settings.use_mock:
                         # optional mock; if not implemented, return a stub
-                        return {"status": "mocked", "request_id": selected_request_id, "labeler_username": labeler_username}
+                        return {
+                            "status": "mocked",
+                            "request_id": selected_request_id,
+                            "labeler_username": labeler_username,
+                        }
                     return client().admin_assign_task(selected_request_id, labeler_username)
 
                 resp = api_call("Assign", do_assign, spinner="Assigning...", show_payload=True)
@@ -208,9 +254,15 @@ with tabs[1]:
     st.subheader("Tasks")
 
     task_search = st.text_input("Search (id/title/status)", key="admin_task_search")
-    task_items = api_call("Load tasks", load_tasks, spinner="Loading tasks...", show_payload=True) or []
-    task_statuses = sorted({str(t.get("status", "")).strip() for t in task_items if str(t.get("status", "")).strip()})
-    task_status_filter = st.multiselect("Status filter", task_statuses, key="admin_task_status_filter")
+    task_items = (
+        api_call("Load tasks", load_tasks, spinner="Loading tasks...", show_payload=True) or []
+    )
+    task_statuses = sorted(
+        {str(t.get("status", "")).strip() for t in task_items if str(t.get("status", "")).strip()}
+    )
+    task_status_filter = st.multiselect(
+        "Status filter", task_statuses, key="admin_task_status_filter"
+    )
 
     task_filtered = apply_filters(
         task_items,
@@ -245,7 +297,9 @@ with tabs[1]:
                         pre_index = i
                         break
 
-            selected_label = st.selectbox("Select task", labels, index=pre_index, key="admin_task_select")
+            selected_label = st.selectbox(
+                "Select task", labels, index=pre_index, key="admin_task_select"
+            )
             selected_task_id = label_to_id[selected_label]
             st.session_state["selected_task_id"] = selected_task_id
 
@@ -266,7 +320,10 @@ with tabs[1]:
                 if st.button("Open Annotate", type="primary", key="admin_open_annotate"):
                     st.switch_page("pages/21_labeler_annotate.py")
             with c2:
-                if st.checkbox("Show selected JSON", key="admin_task_show_json") and selected_task_row:
+                if (
+                    st.checkbox("Show selected JSON", key="admin_task_show_json")
+                    and selected_task_row
+                ):
                     st.json(selected_task_row)
 
 # ==========================
@@ -274,8 +331,12 @@ with tabs[1]:
 # ==========================
 with tabs[2]:
     st.subheader("Users (TBD)")
-    st.info("Пока нет эндпоинта. Как только backend добавит /admin/users — подключим сюда список пользователей и роли.")
+    st.info(
+        "Пока нет эндпоинта. Как только backend добавит /admin/users — подключим сюда список пользователей и роли."
+    )
 
 with tabs[3]:
     st.subheader("Thresholds (TBD)")
-    st.info("Пороговые значения QC (duplicate/AI) лучше хранить в backend + выдавать через /admin/settings. UI подключим после реализации.")
+    st.info(
+        "Пороговые значения QC (duplicate/AI) лучше хранить в backend + выдавать через /admin/settings. UI подключим после реализации."
+    )

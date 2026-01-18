@@ -1,14 +1,15 @@
 import streamlit as st
 
+from core import mock_backend
+from core.api_client import ApiClient, ApiError
 from core.auth import require_role
 from core.config import settings
-from core.api_client import ApiClient, ApiError
-from core import mock_backend
 from core.ui import header
 from core.ui_helpers import api_call
 
 require_role(["labeler", "admin", "universal"])
 header("Annotate", "MVP: классификация. Прогресс + Finish task (UI-ready).")
+
 
 def client() -> ApiClient:
     return ApiClient(
@@ -17,8 +18,11 @@ def client() -> ApiClient:
         timeout_s=settings.request_timeout_s,
     )
 
+
 default_task_id = str(st.session_state.get("selected_task_id", "")).strip()
-task_id = st.text_input("Task ID", value=default_task_id, placeholder="Выберите задачу в My Tasks").strip()
+task_id = st.text_input(
+    "Task ID", value=default_task_id, placeholder="Выберите задачу в My Tasks"
+).strip()
 
 if task_id:
     st.session_state["selected_task_id"] = task_id
@@ -28,8 +32,10 @@ else:
         st.switch_page("pages/20_labeler_tasks.py")
     st.stop()
 
+
 def do_get_task():
     return mock_backend.mock_get_task(task_id) if settings.use_mock else client().get_task(task_id)
+
 
 task = api_call("Load task", do_get_task, spinner="Loading task...", show_payload=True)
 if not task:
@@ -42,8 +48,13 @@ if not images:
     st.warning("No images in task.")
     st.stop()
 
-classes = task.get("classes") or st.session_state.get("cached_classes") or ["pothole", "crosswalk", "traffic_light", "road_sign"]
+classes = (
+    task.get("classes")
+    or st.session_state.get("cached_classes")
+    or ["pothole", "crosswalk", "traffic_light", "road_sign"]
+)
 st.session_state["cached_classes"] = classes
+
 
 # ---- Progress ----
 def do_progress():
@@ -54,10 +65,17 @@ def do_progress():
     except ApiError as e:
         # backend not implemented yet: compute local fallback using images and no remote labels
         if e.status_code in (404, 405, 501):
-            return {"task_id": task_id, "total_images": len(images), "labeled_images": 0}
+            return {
+                "task_id": task_id,
+                "total_images": len(images),
+                "labeled_images": 0,
+            }
         raise
 
-progress = api_call("Load progress", do_progress, spinner="Loading progress...", show_payload=False) or {}
+
+progress = (
+    api_call("Load progress", do_progress, spinner="Loading progress...", show_payload=False) or {}
+)
 total_images = int(progress.get("total_images") or len(images))
 labeled_images = int(progress.get("labeled_images") or 0)
 
@@ -99,17 +117,24 @@ selected = st.multiselect("Labels", options=classes, key=labels_key)
 
 auto_next = st.checkbox("Auto-next after Save", value=True)
 
+
 def do_save():
     if settings.use_mock:
         return mock_backend.mock_save_labels(task_id, image_id, list(selected))
     return client().save_labels(task_id, image_id, list(selected))
+
 
 if st.button("Save labels", type="primary"):
     resp = api_call("Save labels", do_save, spinner="Saving...", show_payload=True)
     if resp is not None:
         st.success("Saved.")
         # refresh progress
-        api_call("Refresh progress", do_progress, spinner="Refreshing progress...", show_payload=False)
+        api_call(
+            "Refresh progress",
+            do_progress,
+            spinner="Refreshing progress...",
+            show_payload=False,
+        )
 
         if auto_next and int(idx) < len(images) - 1:
             st.session_state[idx_key] = int(idx) + 1
@@ -117,11 +142,13 @@ if st.button("Save labels", type="primary"):
 
 st.divider()
 
+
 # ---- Finish task ----
 def do_finish():
     if settings.use_mock:
         return mock_backend.mock_complete_task(task_id)
     return client().complete_task(task_id)
+
 
 c1, c2, c3 = st.columns([1, 1, 2])
 with c1:

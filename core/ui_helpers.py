@@ -4,8 +4,8 @@ import hashlib
 import traceback
 from typing import Any, Callable, Optional, TypeVar
 
-import streamlit as st
 import httpx
+import streamlit as st
 
 from core.api_client import ApiError
 
@@ -29,15 +29,23 @@ def _toast(msg: str) -> None:
 def _render_error_hints(status_code: int, message: str) -> None:
     # Practical, role-focused hints
     if status_code == 0:
-        st.caption("Проверьте BACKEND_URL, доступность backend и VPN/Firewall. Попробуйте увеличить REQUEST_TIMEOUT_S.")
+        st.caption(
+            "Проверьте BACKEND_URL, доступность backend и VPN/Firewall. Попробуйте увеличить REQUEST_TIMEOUT_S."
+        )
     elif status_code == 401:
-        st.caption("Похоже, сессия истекла или токен неверный. Нажмите Logout и залогиньтесь снова.")
+        st.caption(
+            "Похоже, сессия истекла или токен неверный. Нажмите Logout и залогиньтесь снова."
+        )
     elif status_code == 403:
         st.caption("Доступ запрещён для вашей роли. Проверьте роль/права в backend.")
     elif status_code == 404:
-        st.caption("Endpoint не найден. Вероятно, backend ещё не реализовал этот маршрут (это нормально на ранней стадии).")
+        st.caption(
+            "Endpoint не найден. Вероятно, backend ещё не реализовал этот маршрут (это нормально на ранней стадии)."
+        )
     elif status_code == 422:
-        st.caption("Ошибка валидации данных. Проверьте payload (поля, типы, обязательные значения).")
+        st.caption(
+            "Ошибка валидации данных. Проверьте payload (поля, типы, обязательные значения)."
+        )
     elif status_code >= 500:
         st.caption("Ошибка backend. Проверьте логи backend сервиса.")
     else:

@@ -1,5 +1,5 @@
-import streamlit as st
 import httpx
+import streamlit as st
 
 from core.auth import require_role
 from core.config import settings
@@ -25,6 +25,7 @@ st.divider()
 
 st.subheader("Backend status")
 st.write(f"BACKEND_URL: `{settings.backend_url}`")
+
 
 def try_health() -> tuple[bool, str]:
     """
@@ -60,12 +61,15 @@ def try_health() -> tuple[bool, str]:
 
     return (False, last_err or "No health endpoint responded")
 
+
 ok, msg = try_health()
 if ok:
     st.success(msg)
 else:
     st.warning(f"Backend health not confirmed: {msg}")
-    st.caption("Это нормально на ранней стадии. Когда backend добавит /health, здесь будет зелёный статус.")
+    st.caption(
+        "Это нормально на ранней стадии. Когда backend добавит /health, здесь будет зелёный статус."
+    )
 
 st.divider()
 

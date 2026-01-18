@@ -1,7 +1,9 @@
 import streamlit as st
-from core.config import settings
-from core.api_client import ApiClient, ApiError
+
 from core import mock_backend
+from core.api_client import ApiClient, ApiError
+from core.config import settings
+
 
 def get_client() -> ApiClient | None:
     token = st.session_state.get("token")
@@ -9,11 +11,13 @@ def get_client() -> ApiClient | None:
         return None
     return ApiClient(settings.backend_url, token=token)
 
+
 def logout():
     for k in ["token", "role", "user_id"]:
         if k in st.session_state:
             del st.session_state[k]
     st.success("Вы вышли из системы.")
+
 
 def require_role(roles: list[str]):
     role = st.session_state.get("role")
