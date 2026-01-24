@@ -12,6 +12,7 @@ from app.routers import uploads
 from app.routers.qc import router as qc_router
 from app.routers.tasks import router as tasks_router
 from app.routers.images import router as images_router
+from app.routers.export import router as export_router
 
 
 app = FastAPI(title="Dataset Platform Backend")
@@ -59,3 +60,4 @@ app.include_router(uploads.router)
 app.include_router(qc_router)
 app.include_router(tasks_router)
 app.include_router(images_router)
+app.include_router(export_router)

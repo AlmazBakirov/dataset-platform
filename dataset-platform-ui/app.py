@@ -14,6 +14,7 @@ customer_pages = [
     st.Page("pages/10_customer_requests.py", title="Requests", icon="📄"),
     st.Page("pages/11_customer_uploads.py", title="Uploads", icon="⬆️"),
     st.Page("pages/12_customer_qc_review.py", title="QC Review", icon="✅"),
+    st.Page("pages/13_customer_export.py", title="Export", icon="📦"),
 ]
 
 labeler_pages = [

@@ -161,6 +161,30 @@ class ApiClient:
         data = self._request("GET", f"/tasks/{task_id}")
         return data if isinstance(data, dict) else {}
 
+    def get_image_bytes(self, image_id: int) -> bytes:
+        if not self.base_url:
+            raise ApiError(status_code=0, message="BACKEND_URL is empty or not configured.")
+
+        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
+        url = self._url(f"/images/{image_id}/content")
+
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(url, headers=self._headers())
+        except httpx.RequestError as e:
+            raise ApiError(status_code=0, message=str(e)) from e
+
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+                msg = payload.get("detail") if isinstance(payload, dict) else str(payload)
+            except Exception:
+                payload = None
+                msg = resp.text
+            raise ApiError(status_code=resp.status_code, message=msg, payload=payload)
+
+        return resp.content
+
     def save_labels(self, task_id: str, image_id: str, labels: list[str]) -> dict[str, Any]:
         return self._request(
             "POST",

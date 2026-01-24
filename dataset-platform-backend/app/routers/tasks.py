@@ -2,6 +2,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func, distinct
 
 from app.core.deps import get_db, get_current_user
 from app.models.task import Task, TaskImage
@@ -69,7 +70,61 @@ def get_task(
     )
 
 
+@router.get("/tasks/{task_id}/progress")
+def task_progress(
+    task_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    # 1) Проверяем, что задача существует
+    task = db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # 2) Доступ по ролям:
+    #    - labeler: только если задача назначена на него
+    #    - admin/universal: можно смотреть любые
+    #    - customer: запрещено
+    if user.role == "labeler" and task.assigned_to != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if user.role not in ("labeler", "admin", "universal"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # 3) ВАЖНО: кого считаем "лейблером" для прогресса
+    #    Это должно совпадать с save_labels(), где у вас:
+    #    effective_labeler_id = user.id if labeler else task.assigned_to
+    effective_labeler_id = user.id if user.role == "labeler" else task.assigned_to
+
+    if effective_labeler_id is None:
+        raise HTTPException(status_code=400, detail="Task has no assigned labeler")
+
+    # 4) total_images: сколько картинок в задаче
+    total_images = (
+        db.query(func.count(TaskImage.id)).filter(TaskImage.task_id == task_id).scalar()
+        or 0
+    )
+
+    # 5) labeled_images: сколько уникальных image_id уже размечено этим labeler'ом
+    labeled_images = (
+        db.query(func.count(distinct(Annotation.image_id)))
+        .filter(
+            Annotation.task_id == task_id,
+            Annotation.labeler_id == effective_labeler_id,
+        )
+        .scalar()
+        or 0
+    )
+
+    return {
+        "task_id": task_id,
+        "total_images": int(total_images),
+        "labeled_images": int(labeled_images),
+    }
+
+
 @router.post("/tasks/{task_id}/annotations", response_model=SaveLabelsOut)
+@router.post("/tasks/{task_id}/labels", response_model=SaveLabelsOut)
 def save_labels(
     task_id: int,
     payload: SaveLabelsIn,
@@ -149,9 +204,57 @@ def complete_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Разрешённые роли
+    if user.role not in ("labeler", "admin", "universal"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # labeler может завершать только свою задачу
     if user.role == "labeler" and task.assigned_to != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # Если уже done — делаем endpoint идемпотентным (повторный вызов не ломает)
+    if task.status == "done":
+        return {"ok": True, "task_id": task_id, "status": task.status}
+
+    # Кого считаем "лейблером" для проверки полноты
+    effective_labeler_id = user.id if user.role == "labeler" else task.assigned_to
+    if effective_labeler_id is None:
+        raise HTTPException(status_code=400, detail="Task has no assigned labeler")
+
+    # Считаем total_images
+    total_images = (
+        db.query(func.count(TaskImage.id)).filter(TaskImage.task_id == task_id).scalar()
+        or 0
+    )
+
+    if total_images <= 0:
+        raise HTTPException(status_code=409, detail="Task has no images")
+
+    # Считаем labeled_images (уникальные image_id)
+    labeled_images = (
+        db.query(func.count(distinct(Annotation.image_id)))
+        .filter(
+            Annotation.task_id == task_id,
+            Annotation.labeler_id == effective_labeler_id,
+        )
+        .scalar()
+        or 0
+    )
+
+    # Главная защита: нельзя завершить, пока не размечено всё
+    if labeled_images < total_images:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task is not fully labeled ({labeled_images}/{total_images})",
+        )
+
     task.status = "done"
     db.commit()
-    return {"ok": True, "task_id": task_id, "status": task.status}
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "status": task.status,
+        "labeled_images": int(labeled_images),
+        "total_images": int(total_images),
+    }

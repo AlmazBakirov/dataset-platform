@@ -107,28 +107,57 @@ if not image_id:
 
 st.write(f"Image: **{image_id}**")
 
-if img.get("url"):
-    st.image(img["url"], use_container_width=True)
+# --- IMAGE PREVIEW (mock vs real) ---
+
+if settings.use_mock:
+    # В mock-режиме показываем url (если mock его даёт)
+    if img.get("url"):
+        st.image(img["url"], use_container_width=True)
+    else:
+        st.info("Mock: нет URL для изображения.")
 else:
-    st.info("Mock: нет URL. В проде backend должен отдавать ссылку на превью/объект в storage.")
+    # В real-режиме НЕ используем url напрямую (он 401 в браузере).
+    # Мы качаем байты по image_id с токеном и показываем их.
+    try:
+        content = client().get_image_bytes(int(image_id))
+        st.image(content, width=900)
+    except ApiError as e:
+        st.error(f"Failed to load image bytes: {e}")
+        st.write("Debug url:", img.get("url", ""))
+        st.write("Token present:", bool(st.session_state.get("token")))
+
 
 labels_key = f"labels_{task_id}_{image_id}"
-selected = st.multiselect("Labels", options=classes, key=labels_key)
+auto_next_key = f"auto_next_{task_id}"  # чтобы checkbox не сбрасывался при каждом rerun
 
-auto_next = st.checkbox("Auto-next after Save", value=True)
+cL, cR = st.columns([3, 1], vertical_alignment="bottom")
 
+with cL:
+    selected = st.multiselect("Labels", options=classes, key=labels_key)
+    auto_next = st.checkbox("Auto-next after Save", value=True, key=auto_next_key)
 
-def do_save():
-    if settings.use_mock:
-        return mock_backend.mock_save_labels(task_id, image_id, list(selected))
-    return client().save_labels(task_id, image_id, list(selected))
+with cR:
+    save_disabled = len(selected) == 0
 
+    def do_save():
+        if settings.use_mock:
+            return mock_backend.mock_save_labels(task_id, image_id, list(selected))
+        return client().save_labels(task_id, image_id, list(selected))
 
-if st.button("Save labels", type="primary"):
+    save_clicked = st.button(
+        "Save labels",
+        type="primary",
+        disabled=save_disabled,
+        key=f"save_{task_id}_{image_id}",
+        use_container_width=True,
+    )
+
+if save_clicked:
     resp = api_call("Save labels", do_save, spinner="Saving...", show_payload=True)
     if resp is not None:
         st.success("Saved.")
-        # refresh progress
+
+        # refresh progress (сервер)
         api_call(
             "Refresh progress",
             do_progress,
@@ -136,11 +165,12 @@ if st.button("Save labels", type="primary"):
             show_payload=False,
         )
 
+        # auto-next
         if auto_next and int(idx) < len(images) - 1:
             st.session_state[idx_key] = int(idx) + 1
-            st.rerun()
 
-st.divider()
+        # всегда перерисовываем, чтобы метрики/Finish обновились
+        st.rerun()
 
 
 # ---- Finish task ----
@@ -160,10 +190,16 @@ with c2:
         st.rerun()
 with c3:
     finish_disabled = labeled_images < total_images
-    if st.button("Finish task", type="secondary", disabled=finish_disabled, key="finish_task"):
+
+    if st.button(
+        "Finish task",
+        type="secondary",
+        disabled=finish_disabled,
+        key="finish_task",
+    ):
         resp = api_call("Complete task", do_finish, spinner="Completing task...", show_payload=True)
         if resp is not None:
             st.success("Task completed.")
             st.switch_page("pages/20_labeler_tasks.py")
 
-st.caption("Finish task активируется, когда размечены все изображения (по progress).")
+st.caption("Finish task активируется, когда labeled_images == total_images (по progress).")

@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel
 
 
 class SaveLabelsIn(BaseModel):
     image_id: int
-    labels: Dict[str, Any]
+    labels: Any
 
 
 class SaveLabelsOut(BaseModel):
     status: str
     task_id: int
     image_id: int
-    labels: Dict[str, Any]
+    labels: Any
 
 
 class AnnotationOut(BaseModel):
@@ -23,7 +23,7 @@ class AnnotationOut(BaseModel):
     task_id: int
     image_id: int
     labeler_id: int
-    labels: Dict[str, Any]
+    labels: Any
     created_at: datetime
     updated_at: datetime
 
