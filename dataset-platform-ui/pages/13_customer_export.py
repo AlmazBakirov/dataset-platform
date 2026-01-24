@@ -1,65 +1,111 @@
 import streamlit as st
 
-from core.api_client import ApiError
+from core.api_client import ApiClient
 from core.auth import require_role
-from core.state import get_client
+from core.config import settings
+from core.ui import header
 from core.ui_helpers import api_call
 
-require_role(["customer"])
+require_role(["customer", "admin", "universal"])
 
-st.title("Export Parquet")
+header("Export", "Экспорт финального датасета в Parquet (build/status/download).")
 
-c = get_client()
 
-request_id = st.session_state.get("selected_request_id")
+def client() -> ApiClient:
+    return ApiClient(settings.backend_url, token=st.session_state.get("token"))
 
-if not request_id:
-    st.warning("Сначала выберите request на странице Requests.")
+
+# --- Автоподстановка request_id из session_state ---
+selected_request_id = str(st.session_state.get("selected_request_id", "")).strip()
+
+if not selected_request_id:
+    st.warning("Request не выбран. Перейдите в Customer → Requests и выберите заявку.")
+    if st.button("Go to Requests", type="primary"):
+        st.switch_page("pages/10_customer_requests.py")
     st.stop()
 
-st.write(f"Selected request_id: **{request_id}**")
+st.text_input("Selected request_id", value=selected_request_id, disabled=True)
 
-
-def do_status():
-    return c.export_status(str(request_id))
-
-
-def do_export():
-    return c.export_parquet(str(request_id))
-
-
-st.subheader("Status")
-status = api_call(
-    "Export status", do_status, spinner="Loading export status...", show_payload=False
+st.info(
+    "Важно: если backend настроен строго, export может вернуть 409 (Conflict), "
+    "если разметка (labels) отсутствует для части изображений."
 )
 
-if status:
-    st.json(status)
-
 st.divider()
-st.subheader("Build parquet")
 
-if st.button("Build Parquet", type="primary"):
-    resp = api_call("Export parquet", do_export, spinner="Building parquet...", show_payload=True)
-    if resp is not None:
-        st.success("Export created.")
+# --- Actions ---
+c1, c2, c3 = st.columns(3)
 
-st.divider()
-st.subheader("Download")
+with c1:
+    if st.button("Build parquet", type="primary", key="build_parquet"):
 
-# Перечитаем статус (чтобы понять, готово ли)
-status2 = api_call("Refresh export status", do_status, spinner="Refreshing...", show_payload=False)
+        def do_build():
+            return client().export_build_parquet(selected_request_id)
 
-can_download = bool(status2 and status2.get("status") == "done")
-
-if st.button("Fetch file to download", disabled=not can_download):
-    try:
-        data = c.download_export_bytes(str(request_id))
-        st.download_button(
-            label="Download parquet",
-            data=data,
-            file_name=f"request_{request_id}.parquet",
-            mime="application/octet-stream",
+        resp = api_call(
+            "Build parquet",
+            do_build,
+            spinner="Building parquet...",
+            show_payload=True,
         )
-    except ApiError as e:
-        st.error(f"Download failed: {e}")
+        if resp is not None:
+            st.success("Export job started / parquet built.")
+
+with c2:
+    if st.button("Refresh status", key="refresh_status"):
+
+        def do_status():
+            return client().export_status(selected_request_id)
+
+        status = api_call(
+            "Load export status",
+            do_status,
+            spinner="Loading status...",
+            show_payload=True,
+        )
+        if status is not None:
+            st.session_state["export_status_cache"] = status
+
+with c3:
+    # Скачивание — делаем отдельной кнопкой, чтобы не путать со статусом
+    if st.button("Prepare download", key="prepare_download"):
+
+        def do_download():
+            return client().export_download_parquet(selected_request_id)
+
+        content = api_call(
+            "Download parquet",
+            do_download,
+            spinner="Downloading parquet...",
+            show_payload=False,
+        )
+        if content:
+            st.session_state["export_download_bytes"] = content
+            st.success("Parquet downloaded into UI memory. Use Download button below.")
+
+st.divider()
+
+# --- Status view ---
+status = st.session_state.get("export_status_cache")
+if status:
+    st.subheader("Export status")
+    st.json(status)
+else:
+    st.caption("Нажмите Refresh status, чтобы увидеть состояние экспорта.")
+
+# --- Download button (actual file download in browser) ---
+data = st.session_state.get("export_download_bytes")
+if data:
+    file_name = f"request_{selected_request_id}.parquet"
+    st.download_button(
+        label="Download parquet",
+        data=data,
+        file_name=file_name,
+        mime="application/octet-stream",
+        type="secondary",
+        key="download_parquet_btn",
+    )
+else:
+    st.caption(
+        "Нажмите Prepare download, чтобы загрузить parquet байты и активировать Download кнопку."
+    )

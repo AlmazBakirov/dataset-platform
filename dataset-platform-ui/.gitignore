@@ -3,3 +3,19 @@
 **/__pycache__/
 **/*.pyc
 **/.ruff_cache/
+.env
+.venv/
+__pycache__/
+*.pyc
+storage/
+
+*.parquet
+*.db
+*.log
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db

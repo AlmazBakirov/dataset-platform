@@ -94,10 +94,13 @@ else:
         selected_label = st.selectbox("Select request", labels, index=pre_index)
         st.session_state["selected_request_id"] = label_to_id[selected_label]
 
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("Open Uploads", key="open_uploads"):
                 st.switch_page("pages/11_customer_uploads.py")
         with c2:
             if st.button("Open QC Review", key="open_qc"):
                 st.switch_page("pages/12_customer_qc_review.py")
+        with c3:
+            if st.button("Open Export", key="open_export"):
+                st.switch_page("pages/13_customer_export.py")

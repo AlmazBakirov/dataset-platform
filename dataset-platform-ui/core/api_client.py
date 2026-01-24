@@ -189,7 +189,7 @@ class ApiClient:
         return self._request(
             "POST",
             f"/tasks/{task_id}/labels",
-            json={"image_id": image_id, "labels": labels},
+            json={"image_id": int(image_id), "labels": labels},
         )
 
     def task_progress(self, task_id: str) -> dict[str, Any]:
@@ -199,6 +199,31 @@ class ApiClient:
     def complete_task(self, task_id: str) -> dict[str, Any]:
         data = self._request("POST", f"/tasks/{task_id}/complete")
         return data if isinstance(data, dict) else {"status": "ok"}
+
+    def export_parquet(self, request_id: str) -> dict[str, Any]:
+        data = self._request("POST", f"/requests/{request_id}/export/parquet")
+        return data if isinstance(data, dict) else {}
+
+    def download_export_bytes(self, request_id: str) -> bytes:
+        # Скачиваем bytes (не JSON)
+        url = self._url(f"/requests/{request_id}/export/download")
+        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
+
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(url, headers=self._headers())
+        except httpx.RequestError as e:
+            raise ApiError(status_code=0, message=f"Network error: {e!s}") from e
+
+        if not (200 <= resp.status_code < 300):
+            try:
+                payload = resp.json()
+                msg = payload.get("detail") or payload.get("message") or resp.text
+            except Exception:
+                msg = resp.text
+            raise ApiError(status_code=resp.status_code, message=msg)
+
+        return resp.content
 
     # ---------- Admin ----------
     def admin_list_requests(self) -> list[dict[str, Any]]:
@@ -218,4 +243,21 @@ class ApiClient:
             "POST",
             "/admin/assign",
             json={"request_id": request_id, "labeler_username": labeler_username},
+        )
+        # ---------- Export ----------
+
+    def export_build_parquet(self, request_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/requests/{request_id}/export/parquet")
+
+    def export_status(self, request_id: str) -> dict[str, Any]:
+        data = self._request("GET", f"/requests/{request_id}/export/status")
+        return data if isinstance(data, dict) else {}
+
+    def export_download_parquet(self, request_id: str) -> bytes:
+        data = self._request("GET", f"/requests/{request_id}/export/download")
+        if isinstance(data, (bytes, bytearray)):
+            return bytes(data)
+        # если backend вдруг вернул json (ошибка) — покажем понятную ошибку
+        raise ApiError(
+            status_code=0, message="Expected parquet bytes, got non-bytes response", payload=data
         )

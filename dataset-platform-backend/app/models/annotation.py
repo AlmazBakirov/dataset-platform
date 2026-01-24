@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-
+from typing import List
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,7 +17,7 @@ class Annotation(Base):
     image_id: Mapped[int] = mapped_column(ForeignKey("images.id"), index=True)
     labeler_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
-    labels: Mapped[dict] = mapped_column(JSON, default=dict)
+    labels: Mapped[List[str]] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
