@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:16
-    container_name: dataset_platform_db
+    container_name: dpl_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -10,6 +10,59 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dataset_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    container_name: dpl_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api:
+    build: .
+    container_name: dpl_api
+    env_file:
+      - .env.docker
+    environment:
+      # говорим Settings, какой env-file читать (на всякий случай)
+      ENV_FILE: .env.docker
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -lc "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: dpl_worker
+    env_file:
+      - .env.docker
+    environment:
+      ENV_FILE: .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -lc "celery -A app.worker.celery_app:celery_app worker -l info --pool=solo"
+    restart: unless-stopped
 
 volumes:
   db_data:

@@ -19,15 +19,27 @@ class QCRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     request_id: Mapped[int] = mapped_column(ForeignKey("requests.id"), index=True)
 
+    # NEW: связь с Celery job
+    celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # FIX: правильный дефолт
     status: Mapped[str] = mapped_column(
-        String(32), default="done"
+        String(32), default="queued", index=True
     )  # queued/running/done/failed
+
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    started_at: Mapped[datetime] = mapped_column(
+    # OPTIONAL but recommended: created_at отдельно, чтобы started_at был именно "когда реально стартовали"
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    # FIX: started_at не должен ставиться при создании (он будет ставиться в worker)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

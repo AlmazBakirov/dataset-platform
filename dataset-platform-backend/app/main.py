@@ -5,6 +5,7 @@ from app.models.user import User
 from app.models.request import Request  # noqa: F401
 from app.models.annotation import Annotation  # noqa: F401
 from app.models.task import Task, TaskImage  # noqa: F401
+from app.models.export import Export  # noqa: F401
 from app.core.security import hash_password
 from app.routers.auth import router as auth_router
 from app.routers.requests import router as requests_router
@@ -13,6 +14,7 @@ from app.routers.qc import router as qc_router
 from app.routers.tasks import router as tasks_router
 from app.routers.images import router as images_router
 from app.routers.export import router as export_router
+from app.routers import images, export
 
 
 app = FastAPI(title="Dataset Platform Backend")
@@ -61,3 +63,6 @@ app.include_router(qc_router)
 app.include_router(tasks_router)
 app.include_router(images_router)
 app.include_router(export_router)
+app.include_router(uploads.router)
+app.include_router(images.router)
+app.include_router(export.router)

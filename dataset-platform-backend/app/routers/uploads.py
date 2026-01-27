@@ -1,17 +1,108 @@
+from __future__ import annotations
 import hashlib
-from pathlib import Path
 from typing import List
-
+from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import settings, get_s3_client
 from app.core.deps import get_db, get_current_user
-from app.models.request import Request
 from app.models.image import Image
+from app.models.request import Request
 from app.schemas.uploads import ImageOut
+from app.schemas.uploads import (
+    ConfirmUploadIn,
+    ConfirmUploadOut,
+    PresignUploadIn,
+    PresignUploadOut,
+)
 
 router = APIRouter(tags=["uploads"])
+
+
+def _require_request_access(req: Request, user) -> None:
+    if user.role in ("admin", "universal"):
+        return
+    if user.role != "customer":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if req.customer_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@router.post("/uploads/presign", response_model=PresignUploadOut)
+def presign_upload(
+    payload: PresignUploadIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    req = db.get(Request, payload.request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    _require_request_access(req, user)
+
+    # object key: images/requests/{request_id}/{timestamp}_{filename}
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    safe_name = payload.file_name.replace("\\", "_").replace("/", "_")
+    object_key = f"requests/{payload.request_id}/{ts}_{safe_name}"
+
+    s3 = get_s3_client()
+    upload_url = s3.presign_put(
+        bucket=settings.s3_bucket_images,
+        key=object_key,
+        content_type=payload.content_type or "application/octet-stream",
+    )
+
+    return PresignUploadOut(
+        upload_url=upload_url,
+        object_key=object_key,
+        bucket=settings.s3_bucket_images,
+        expires_in=int(settings.s3_presign_expires_s),
+    )
+
+
+@router.post("/uploads/confirm", response_model=ConfirmUploadOut)
+def confirm_upload(
+    payload: ConfirmUploadIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    req = db.get(Request, payload.request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    _require_request_access(req, user)
+    if not payload.sha256:
+        raise HTTPException(
+            status_code=400, detail="sha256 is required for confirm_upload"
+        )
+
+    s3 = get_s3_client()
+    if not s3.object_exists(settings.s3_bucket_images, payload.object_key):
+        raise HTTPException(status_code=400, detail="Object not found in S3 bucket")
+
+    # storage_path теперь хранит s3://bucket/key (или просто key — но лучше явно)
+    storage_path = f"s3://{settings.s3_bucket_images}/{payload.object_key}"
+
+    img = Image(
+        request_id=payload.request_id,
+        file_name=payload.file_name,
+        content_type=payload.content_type,
+        storage_path=storage_path,
+        sha256=payload.sha256,
+    )
+    db.add(img)
+    db.commit()
+    db.refresh(img)
+
+    return ConfirmUploadOut(
+        image_id=img.id,
+        request_id=img.request_id,
+        file_name=img.file_name,
+        storage_path=img.storage_path,
+        sha256=img.sha256,
+    )
 
 
 def _sha256(data: bytes) -> str:

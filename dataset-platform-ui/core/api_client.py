@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
+import requests
 
 
 @dataclass
@@ -131,18 +133,56 @@ class ApiClient:
         data = self._request("GET", f"/requests/{request_id}/uploads")
         return data if isinstance(data, list) else []
 
-    # ---------- Uploads (presigned) ----------
-    def presign_uploads(self, request_id: str, files: list[dict[str, Any]]) -> dict[str, Any]:
-        return self._request(
-            "POST", "/uploads/presign", json={"request_id": request_id, "files": files}
-        )
+        # ---------- Uploads (presigned: single file) ----------
 
-    def complete_uploads(self, request_id: str, uploaded: list[dict[str, Any]]) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/uploads/complete",
-            json={"request_id": request_id, "uploaded": uploaded},
+    def uploads_presign(
+        self, request_id: int, file_name: str, content_type: str, sha256: str | None
+    ) -> dict[str, Any]:
+        payload = {
+            "request_id": int(request_id),
+            "file_name": file_name,
+            "content_type": content_type or "application/octet-stream",
+            "sha256": sha256,
+        }
+        data = self._request("POST", "/uploads/presign", json=payload)
+        return data if isinstance(data, dict) else {}
+
+    def uploads_confirm(
+        self,
+        request_id: int,
+        file_name: str,
+        content_type: str,
+        object_key: str,
+        sha256: str | None,
+    ) -> dict[str, Any]:
+        payload = {
+            "request_id": int(request_id),
+            "file_name": file_name,
+            "content_type": content_type or "application/octet-stream",
+            "object_key": object_key,
+            "sha256": sha256,
+        }
+        data = self._request("POST", "/uploads/confirm", json=payload)
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def sha256_bytes(data: bytes) -> str:
+        h = hashlib.sha256()
+        h.update(data)
+        return h.hexdigest()
+
+    @staticmethod
+    def put_presigned(upload_url: str, data: bytes, content_type: str) -> None:
+        # В presigned PUT НЕ нужно Authorization. Только Content-Type.
+        r = requests.put(
+            upload_url,
+            data=data,
+            headers={"Content-Type": content_type or "application/octet-stream"},
         )
+        if r.status_code not in (200, 204):
+            raise ApiError(
+                status_code=r.status_code, message=f"Presigned PUT failed: {r.text}", payload=None
+            )
 
     # ---------- QC ----------
     def run_qc(self, request_id: str) -> dict[str, Any]:
@@ -169,7 +209,7 @@ class ApiClient:
         url = self._url(f"/images/{image_id}/content")
 
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(url, headers=self._headers())
         except httpx.RequestError as e:
             raise ApiError(status_code=0, message=str(e)) from e
@@ -204,27 +244,6 @@ class ApiClient:
         data = self._request("POST", f"/requests/{request_id}/export/parquet")
         return data if isinstance(data, dict) else {}
 
-    def download_export_bytes(self, request_id: str) -> bytes:
-        # Скачиваем bytes (не JSON)
-        url = self._url(f"/requests/{request_id}/export/download")
-        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
-
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.get(url, headers=self._headers())
-        except httpx.RequestError as e:
-            raise ApiError(status_code=0, message=f"Network error: {e!s}") from e
-
-        if not (200 <= resp.status_code < 300):
-            try:
-                payload = resp.json()
-                msg = payload.get("detail") or payload.get("message") or resp.text
-            except Exception:
-                msg = resp.text
-            raise ApiError(status_code=resp.status_code, message=msg)
-
-        return resp.content
-
     # ---------- Admin ----------
     def admin_list_requests(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/admin/requests")
@@ -254,10 +273,21 @@ class ApiClient:
         return data if isinstance(data, dict) else {}
 
     def export_download_parquet(self, request_id: str) -> bytes:
-        data = self._request("GET", f"/requests/{request_id}/export/download")
-        if isinstance(data, (bytes, bytearray)):
-            return bytes(data)
-        # если backend вдруг вернул json (ошибка) — покажем понятную ошибку
-        raise ApiError(
-            status_code=0, message="Expected parquet bytes, got non-bytes response", payload=data
-        )
+        url = self._url(f"/requests/{request_id}/export/download")
+        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
+
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                resp = client.get(url, headers=self._headers())
+        except httpx.RequestError as e:
+            raise ApiError(status_code=0, message=f"Network error: {e!s}") from e
+
+        if not (200 <= resp.status_code < 300):
+            try:
+                payload = resp.json()
+                msg = payload.get("detail") or payload.get("message") or resp.text
+            except Exception:
+                msg = resp.text
+            raise ApiError(status_code=resp.status_code, message=msg)
+
+        return resp.content
