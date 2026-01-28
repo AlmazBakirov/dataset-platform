@@ -24,3 +24,5 @@ storage/
 .DS_Store
 Thumbs.db
 .vscode/
+
+alembic/versions_backup/
