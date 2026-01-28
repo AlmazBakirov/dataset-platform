@@ -1,33 +1,28 @@
-"""add celery_task_id to qc_runs
+"""add celery_task_id to qc_runs (idempotent)
 
 Revision ID: b70dd0033162
 Revises:
-Create Date: 2026-01-26 21:00:51.792722
-
+Create Date: 2026-01-28
 """
 
-from typing import Sequence, Union
-
 from alembic import op
-import sqlalchemy as sa
-
 
 # revision identifiers, used by Alembic.
-revision: str = "b70dd0033162"
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "b70dd0033162"
+down_revision = None
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "qc_runs", sa.Column("celery_task_id", sa.String(length=255), nullable=True)
-    )
-    op.create_index(
-        "ix_qc_runs_celery_task_id", "qc_runs", ["celery_task_id"], unique=False
+    # idempotent для Postgres
+    op.execute(
+        """
+        ALTER TABLE qc_runs
+        ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR;
+        """
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_qc_runs_celery_task_id", table_name="qc_runs")
-    op.drop_column("qc_runs", "celery_task_id")
+    op.execute("ALTER TABLE qc_runs DROP COLUMN IF EXISTS celery_task_id;")
