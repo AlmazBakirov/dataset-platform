@@ -3,6 +3,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from app.core.config import settings
 
 # Alembic Config
 config = context.config
@@ -12,14 +13,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # 1) DATABASE_URL должен быть задан в окружении
-database_url = os.getenv("DATABASE_URL")
+database_url = os.getenv("DATABASE_URL") or settings.database_url
 if not database_url:
-    raise RuntimeError(
-        "DATABASE_URL is not set.\n"
-        "Set it in PowerShell:\n"
-        "  $env:DATABASE_URL='postgresql+psycopg://postgres:postgres@localhost:5432/dataset_platform'\n"
-        "Or run migrations inside Docker container where env is already set."
-    )
+    raise RuntimeError("DATABASE_URL is not set and settings.database_url is empty")
 
 # Передаём URL в Alembic
 config.set_main_option("sqlalchemy.url", database_url)

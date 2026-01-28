@@ -20,9 +20,7 @@ if not request_id:
 
 st.text_input("Selected request_id", value=str(request_id), disabled=True)
 
-upload_mode = getattr(
-    settings, "upload_mode", "multipart"
-)  # если у вас есть это поле в UI settings
+upload_mode = getattr(settings, "upload_mode", "mvp")  # mvp | presigned
 st.caption(f"UPLOAD_MODE = {upload_mode}")
 
 files = st.file_uploader("Select images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -37,15 +35,13 @@ if upload_mode == "presigned":
             content_type = f.type or "application/octet-stream"
             sha256 = ApiClient.sha256_bytes(data)
 
-            def do_presign(
-                f=f,
-                content_type=content_type,
-                sha256=sha256,
-            ):  # Fix function definitions to bind loop variables properly  # Fix function definitions to bind loop variables properly
-                return c.uploads_presign(int(request_id), f.name, content_type, sha256)
-
             pres = api_call(
-                "Presign", do_presign, spinner=f"Presigning {f.name}...", show_payload=False
+                "Presign",
+                lambda f=f, ct=content_type, sh=sha256: c.uploads_presign(
+                    int(request_id), f.name, ct, sh
+                ),
+                spinner=f"Presigning {f.name}...",
+                show_payload=False,
             )
             if not pres:
                 continue
@@ -58,23 +54,43 @@ if upload_mode == "presigned":
                 st.error(f"Presigned upload failed for {f.name}: {e}")
                 continue
 
-            def do_confirm(
-                f=f,
-                content_type=content_type,
-                pres=pres,
-                sha256=sha256,
-            ):  # Fix function definitions to bind loop variables properly  # Fix function definitions to bind loop variables properly
-                return c.uploads_confirm(
-                    int(request_id), f.name, content_type, pres["object_key"], sha256
-                )
-
             conf = api_call(
-                "Confirm", do_confirm, spinner=f"Confirming {f.name}...", show_payload=True
+                "Confirm",
+                lambda f=f, ct=content_type, p=pres, sh=sha256: c.uploads_confirm(
+                    int(request_id), f.name, ct, p["object_key"], sh
+                ),
+                spinner=f"Confirming {f.name}...",
+                show_payload=True,
             )
             if conf:
                 st.success(f"Confirmed image_id={conf.get('image_id')}")
 
 else:
-    st.info(
-        "multipart режим оставлен как fallback. Если хотите — я дам финальный код и для multipart страницы."
-    )
+    # ✅ multipart fallback: реально загружает через backend
+    if st.button("Upload (multipart via backend)", type="primary"):
+        packed = []
+        for f in files:
+            packed.append((f.name, f.getvalue(), f.type or "application/octet-stream"))
+
+        res = api_call(
+            "Upload multipart",
+            lambda: c.upload_files_mvp(str(request_id), packed),
+            spinner="Uploading via backend...",
+            show_payload=True,
+        )
+        if res is not None:
+            st.success("Uploaded via backend (multipart).")
+
+# Показать список загруженных файлов
+st.divider()
+if st.button("Refresh uploads list"):
+    pass
+
+uploads = api_call(
+    "List uploads",
+    lambda: c.list_uploads(str(request_id)),
+    spinner="Loading uploads...",
+    show_payload=False,
+)
+if uploads:
+    st.write(uploads)

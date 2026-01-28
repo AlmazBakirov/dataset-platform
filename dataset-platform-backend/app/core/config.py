@@ -1,34 +1,46 @@
+from __future__ import annotations
+
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.s3 import S3Client, S3Config
+from .s3 import S3Client, S3Config
 
 
 def _detect_env_file() -> str | None:
     """
-    1) Если задан ENV_FILE и такой файл существует — читаем его.
-    2) Иначе, если рядом есть .env — читаем его.
-    3) Иначе — НЕ читаем dotenv, берём только переменные окружения (Docker env).
+    2 режима:
+    - Docker: .env.docker (db/redis/minio)
+    - Local: .env (localhost)
+    Приоритет:
+      1) ENV_FILE (если задан и файл существует)
+      2) .env.docker (если существует)
+      3) .env (если существует)
+      4) None (только переменные окружения)
     """
-    env_file = os.getenv("ENV_FILE")
-    if env_file:
-        p = Path(env_file)
+    explicit = os.getenv("ENV_FILE")
+    if explicit:
+        p = Path(explicit)
         if p.exists():
             return str(p)
 
-    p = Path(".env")
-    return str(p) if p.exists() else None
+    p_docker = Path(".env.docker")
+    if p_docker.exists():
+        return str(p_docker)
+
+    p_local = Path(".env")
+    if p_local.exists():
+        return str(p_local)
+
+    return None
 
 
 class Settings(BaseSettings):
-    # Важно:
-    # - extra="ignore": чтобы приложение не падало, если в env есть "лишние" ключи
-    # - env_file=_detect_env_file(): чтобы в Docker не схватить случайный .env из образа
-    # - case_sensitive=False: чтобы нормально читались DATABASE_URL / database_url и т.д.
     model_config = SettingsConfigDict(
         env_file=_detect_env_file(),
+        env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
     )
@@ -47,10 +59,15 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://127.0.0.1:6379/1"
 
     # ---------- S3 / MinIO ----------
-    s3_endpoint_url: str = "http://127.0.0.1:9000"
+    # INTERNAL: то, что доступно контейнерам (minio:9000) или локально (127.0.0.1:9000)
+    s3_endpoint_url_internal: str = "http://127.0.0.1:9000"
+    # PUBLIC: то, что открывает браузер/Streamlit (обычно http://localhost:9000)
+    s3_endpoint_url_public: str = "http://127.0.0.1:9000"
+
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_region: str = "us-east-1"
+
     s3_bucket_images: str = "images"
     s3_bucket_exports: str = "exports"
     s3_presign_expires_s: int = 600
@@ -59,14 +76,15 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+@lru_cache
 def get_s3_client() -> S3Client:
     """
-    Helper, чтобы в роутерах вы делали:
-      from app.core.config import get_s3_client, settings
-      s3 = get_s3_client()
+    Важно: для presigned URL используем PUBLIC endpoint.
+    Для ensure_bucket/put_bytes используем INTERNAL endpoint.
     """
     cfg = S3Config(
-        endpoint_url=settings.s3_endpoint_url,
+        endpoint_url_internal=settings.s3_endpoint_url_internal,
+        endpoint_url_public=settings.s3_endpoint_url_public,
         access_key=settings.s3_access_key,
         secret_key=settings.s3_secret_key,
         region=settings.s3_region,

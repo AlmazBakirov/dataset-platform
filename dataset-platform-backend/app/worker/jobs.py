@@ -1,25 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 import json
+import io
 
 from celery import shared_task
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
+from app.core.config import get_s3_client, settings
+
 from app.models.request import Request
 from app.models.image import Image
-
-# QC модели (ожидается, что у вас есть QCRun/QCResult; если имена другие — замените импорты)
 from app.models.qc import QCRun, QCResult
-
-# Tasks модели (у вас есть Task/TaskImage)
 from app.models.task import Task, TaskImage
 from app.models.user import User
-
-# Export модель (создадим ниже как app.models.export.Export)
 from app.models.export import Export
+from app.models.annotation import Annotation
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -29,14 +26,10 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def _ensure_dir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
-
-
 def _calc_duplicates_by_sha(images: list[Image]) -> dict[int, int | None]:
     """
-    Возвращает dict: image_id -> duplicate_of_image_id (или None).
-    Exact-duplicate по sha256.
+    dict: image_id -> duplicate_of_image_id (или None)
+    Exact duplicate по sha256.
     """
     seen: dict[str, int] = {}
     dup_of: dict[int, int | None] = {}
@@ -83,7 +76,6 @@ def _ensure_task_for_request(db: Session, request_id: int) -> int:
     db.add(task)
     db.flush()  # получить task.id
 
-    # привяжем все images
     images = db.query(Image).filter(Image.request_id == request_id).all()
     for img in images:
         db.add(TaskImage(task_id=task.id, image_id=img.id))
@@ -103,7 +95,6 @@ def qc_run_job(qc_run_id: int) -> dict:
         if not req:
             raise RuntimeError("Request not found")
 
-        # статус running
         run.status = "running"
         run.started_at = _now()
         run.error = None
@@ -117,13 +108,12 @@ def qc_run_job(qc_run_id: int) -> dict:
             db.commit()
             return {"ok": False, "error": run.error}
 
-        # очистим результаты этого run (если job ретраится)
+        # идемпотентность: если ретрай — пересоздадим результаты
         db.query(QCResult).filter(QCResult.qc_run_id == run.id).delete()
         db.commit()
 
         dup_of = _calc_duplicates_by_sha(images)
 
-        # создаём qc results (MVP — exact dup + заглушка ai_score)
         for img in images:
             d_of = dup_of.get(img.id)
             duplicate_score = 1.0 if d_of is not None else 0.0
@@ -142,7 +132,6 @@ def qc_run_job(qc_run_id: int) -> dict:
             )
             db.add(r)
 
-        # создаём task, если ещё нет
         _ensure_task_for_request(db, run.request_id)
 
         run.status = "done"
@@ -153,7 +142,6 @@ def qc_run_job(qc_run_id: int) -> dict:
 
     except Exception as e:
         db.rollback()
-        # если run существует — пометим failed
         try:
             run = db.get(QCRun, qc_run_id)
             if run:
@@ -170,6 +158,10 @@ def qc_run_job(qc_run_id: int) -> dict:
 
 @shared_task(name="export.build_parquet")
 def export_job(export_id: int) -> dict:
+    """
+    Асинхронная сборка parquet в S3/MinIO.
+    Пишет storage_path в формате: s3://<bucket>/<key>
+    """
     db = SessionLocal()
     try:
         exp = db.get(Export, export_id)
@@ -185,8 +177,12 @@ def export_job(export_id: int) -> dict:
         exp.error = None
         db.commit()
 
-        # Собираем данные для parquet (MVP)
-        images = db.query(Image).filter(Image.request_id == exp.request_id).all()
+        images = (
+            db.query(Image)
+            .filter(Image.request_id == exp.request_id)
+            .order_by(Image.id.asc())
+            .all()
+        )
         if not images:
             exp.status = "failed"
             exp.error = "No images"
@@ -194,43 +190,97 @@ def export_job(export_id: int) -> dict:
             db.commit()
             return {"ok": False, "error": exp.error}
 
-        # labels берём из annotations (у вас уже есть таблица annotations)
-        # Если у вас другие имена/модель — поправьте импорт/запрос.
-        from app.models.annotation import (
-            Annotation,
-        )  # локальный импорт чтобы избежать циклов
-
-        rows = []
-        for img in images:
-            ann = (
-                db.query(Annotation)
-                .filter(Annotation.image_id == img.id)
-                .order_by(Annotation.updated_at.desc())
-                .first()
+        # проверка: все изображения размечены (хотя бы 1 annotation на image_id)
+        image_ids = [img.id for img in images]
+        labeled_ids = {
+            r[0]
+            for r in db.query(Annotation.image_id)
+            .filter(Annotation.image_id.in_(image_ids))
+            .distinct()
+            .all()
+        }
+        if len(labeled_ids) != len(image_ids):
+            missing = sorted(set(image_ids) - labeled_ids)
+            exp.status = "failed"
+            exp.error = f"Not all images labeled. Missing image_ids: {missing[:20]}" + (
+                " ..." if len(missing) > 20 else ""
             )
-            labels = ann.labels if ann else None
+            exp.finished_at = _now()
+            db.commit()
+            return {"ok": False, "error": exp.error}
 
-            rows.append(
+        # qc_map по последнему QC run
+        last_run = (
+            db.query(QCRun)
+            .filter(QCRun.request_id == exp.request_id)
+            .order_by(QCRun.id.desc())
+            .first()
+        )
+        qc_map: dict[int, QCResult] = {}
+        if last_run:
+            qc_rows = db.query(QCResult).filter(QCResult.qc_run_id == last_run.id).all()
+            for r in qc_rows:
+                qc_map[int(r.image_id)] = r
+
+        # ann_map: берём самую свежую annotation на image_id
+        ann_rows = (
+            db.query(Annotation)
+            .filter(Annotation.image_id.in_(image_ids))
+            .order_by(Annotation.image_id.asc(), Annotation.updated_at.desc())
+            .all()
+        )
+        ann_map: dict[int, Annotation] = {}
+        for a in ann_rows:
+            iid = int(a.image_id)
+            if iid not in ann_map:
+                ann_map[iid] = a
+
+        out_rows = []
+        for img in images:
+            ann = ann_map.get(int(img.id))
+            labels = ann.labels if ann else None
+            ann_updated = ann.updated_at.isoformat() if ann and ann.updated_at else None
+
+            qc = qc_map.get(int(img.id))
+            qc_flags = qc.flags if qc else None
+
+            out_rows.append(
                 {
                     "request_id": int(exp.request_id),
                     "image_id": int(img.id),
                     "file_name": img.file_name,
                     "storage_path": img.storage_path,
                     "sha256": img.sha256,
+                    "labels": labels,
                     "labels_json": json.dumps(labels) if labels is not None else None,
+                    "annotation_updated_at": ann_updated,
+                    "duplicate_score": float(qc.duplicate_score) if qc else None,
+                    "ai_generated_score": float(qc.ai_generated_score) if qc else None,
+                    "qc_flags": qc_flags,
+                    "qc_flags_json": json.dumps(qc_flags)
+                    if qc_flags is not None
+                    else None,
                 }
             )
 
-        table = pa.Table.from_pylist(rows)
+        table = pa.Table.from_pylist(out_rows)
 
-        out_dir = Path("storage") / "exports"
-        _ensure_dir(out_dir)
+        buf = io.BytesIO()
+        pq.write_table(table, buf)
+        data = buf.getvalue()
 
-        out_path = out_dir / f"request_{exp.request_id}_export_{exp.id}.parquet"
-        pq.write_table(table, out_path)
+        # кладём parquet в exports bucket
+        s3 = get_s3_client()
+        bucket = settings.s3_bucket_exports
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        key = f"requests/{exp.request_id}/exports/export_{ts}_{exp.id}.parquet"
+
+        s3.put_bytes(
+            bucket=bucket, key=key, data=data, content_type="application/octet-stream"
+        )
 
         exp.status = "done"
-        exp.storage_path = str(out_path)
+        exp.storage_path = f"s3://{bucket}/{key}"
         exp.finished_at = _now()
         db.commit()
 
