@@ -36,7 +36,12 @@ def presign_upload(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    req = db.get(Request, payload.request_id)
+    if not payload.sha256:
+        raise HTTPException(
+            status_code=400, detail="sha256 is required for presigned upload"
+        )
+
+    req: Request | None = db.get(Request, payload.request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -52,6 +57,7 @@ def presign_upload(
         bucket=settings.s3_bucket_images,
         key=object_key,
         content_type=payload.content_type or "application/octet-stream",
+        sha256=payload.sha256,
     )
 
     return PresignUploadOut(

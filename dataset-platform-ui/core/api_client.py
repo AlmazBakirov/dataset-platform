@@ -173,20 +173,23 @@ class ApiClient:
 
     @staticmethod
     def put_presigned(upload_url: str, data: bytes, content_type: str) -> None:
-        # В presigned PUT НЕ нужно Authorization. Только Content-Type.
-        r = requests.put(
-            upload_url,
-            data=data,
-            headers={"Content-Type": content_type or "application/octet-stream"},
-        )
+        # Важно: НЕ отправляем лишние headers, иначе MinIO может ругаться "headers not signed"
+        r = requests.put(upload_url, data=data)
+
         if r.status_code not in (200, 204):
             raise ApiError(
-                status_code=r.status_code, message=f"Presigned PUT failed: {r.text}", payload=None
+                status_code=r.status_code,
+                message=f"Presigned PUT failed: {r.text}",
+                payload=None,
             )
 
     # ---------- QC ----------
     def run_qc(self, request_id: str) -> dict[str, Any]:
         return self._request("POST", f"/requests/{request_id}/qc/run")
+
+    def qc_status(self, request_id: str) -> dict[str, Any]:
+        data = self._request("GET", f"/requests/{request_id}/qc/status")
+        return data if isinstance(data, dict) else {}
 
     def qc_results(self, request_id: str) -> list[dict[str, Any]]:
         data = self._request("GET", f"/requests/{request_id}/qc/results")
